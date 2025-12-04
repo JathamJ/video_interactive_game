@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <title>交互视频游戏</title>
+  <style>
+    :root { --bg: #0a0b10; --fg: #e6e8ee; --muted: #aab1c0; --accent: #6aa1ff; --accent2: #ff6aa1; --overlay: rgba(0,0,0,0.55); }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; }
+    body { margin: 0; background: radial-gradient(1200px 800px at 50% -200px, #141827, var(--bg)); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; }
+    .app { min-height: 100vh; display: grid; grid-template-rows: 1fr; }
+    .player-wrap { position: relative; width: 100%; height: 100vh; display: grid; place-items: center; }
+    video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+    .hidden { display: none !important; }
+    .loading { position: fixed; inset: 0; display: grid; place-items: center; gap: 24px; background: linear-gradient(180deg, rgba(10,11,16,0.9), rgba(10,11,16,0.85)); padding: 24px; text-align: center; z-index: 30; }
+    .loading .logo { font-weight: 700; letter-spacing: 2px; font-size: clamp(18px, 2.8vw, 28px); }
+    .loading .msg { color: var(--muted); font-size: clamp(14px, 2.2vw, 18px); }
+    .btn { appearance: none; border: none; outline: none; cursor: pointer; padding: 12px 18px; border-radius: 12px; font-size: clamp(14px, 2.4vw, 18px); color: #fff; background: linear-gradient(135deg, var(--accent), #4a7dff 60%); box-shadow: 0 8px 20px rgba(74,125,255,0.35); transition: transform .15s ease, box-shadow .15s ease; }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(74,125,255,0.45); }
+    .choices { position: fixed; inset: 0; z-index: 20; display: grid; grid-template-rows: 1fr auto; }
+    .choices .overlay { position: absolute; inset: 0; backdrop-filter: blur(2px); background: var(--overlay); }
+    .choices-list { position: relative; z-index: 21; list-style: none; margin: 0; padding: 20px; display: grid; gap: 12px; grid-template-columns: 1fr; max-width: 560px; width: min(88vw, 560px); justify-self: center; align-self: end; margin-bottom: clamp(80px, 18vh, 240px); }
+    .choice-item { padding: 14px 16px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.12); background: rgba(20,24,39,0.6); color: var(--fg); font-size: clamp(14px, 2.2vw, 18px); line-height: 1.45; cursor: pointer; backdrop-filter: blur(2px); transition: background .18s ease, transform .12s ease, border-color .18s ease; }
+    .choice-item:hover { background: rgba(40,48,78,0.75); transform: translateY(-1px); border-color: rgba(255,255,255,0.18); }
+    .end { position: fixed; inset: 0; display: grid; place-items: center; z-index: 25; }
+    .end .overlay { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(10,11,16,0.9), rgba(10,11,16,0.9)); }
+    .end-content { position: relative; z-index: 26; text-align: center; display: grid; gap: 16px; padding: 20px; }
+    .end-title { font-size: clamp(20px, 3.2vw, 32px); font-weight: 700; }
+    .end-sub { color: var(--muted); font-size: clamp(14px, 2.2vw, 18px); }
+    @media (min-width: 768px) { .choices-list { grid-template-columns: 1fr 1fr 1fr; } }
+    @media (min-width: 992px) { video { width: auto; height: 88vh; aspect-ratio: 9/16; } .choices-list { margin-bottom: clamp(120px, 20vh, 280px); } }
+  </style>
+  <script src="https://unpkg.com/hls.js@latest"></script>
+</head>
+<body>
+  <div class="app">
+    <div class="player-wrap">
+      <video id="player" playsinline webkit-playsinline controls preload="auto"></video>
+    </div>
+    <div id="loading" class="loading">
+      <div class="logo">交互视频游戏</div>
+      <div class="msg">请打开设备声音，并点击开始</div>
+      <button id="startBtn" class="btn">开始游戏</button>
+    </div>
+    <div id="choices" class="choices hidden">
+      <div class="overlay"></div>
+      <ul id="choicesList" class="choices-list"></ul>
+    </div>
+    <div id="end" class="end hidden">
+      <div class="overlay"></div>
+      <div class="end-content">
+        <div class="end-title">游戏结束</div>
+        <div class="end-sub">感谢游玩</div>
+        <button id="restartBtn" class="btn" style="justify-self:center">重新开始</button>
+      </div>
+    </div>
+  </div>
+  <script>
+    const apiBase = 'http://127.0.0.1:8101';
+    const qs = new URLSearchParams(location.search);
+    const gameId = qs.get('gameId') || '1';
+    const player = document.getElementById('player');
+    const loading = document.getElementById('loading');
+    const startBtn = document.getElementById('startBtn');
+    const choices = document.getElementById('choices');
+    const choicesList = document.getElementById('choicesList');
+    const endLayer = document.getElementById('end');
+    let currentScene = null;
+    let nextScene = null;
+    let prefetchSceneData = null;
+
+    function fetchScene(sceneId) {
+      const url = `${apiBase}/v1/game/video?gameId=${encodeURIComponent(gameId)}&sceneId=${encodeURIComponent(sceneId)}`;
+      return fetch(url, { credentials: 'omit' }).then(r => r.json()).then(j => {
+        if (j && j.code === 200 && j.data) return j.data; else throw new Error('接口异常');
+      });
+    }
+
+    function attachM3U8(video, url) {
+      return new Promise((resolve, reject) => {
+        if (video._hls) { try { video._hls.destroy(); } catch(e){} video._hls = null; }
+        if (video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = url;
+          const onLoaded = () => { video.removeEventListener('loadedmetadata', onLoaded); resolve(); };
+          video.addEventListener('loadedmetadata', onLoaded, { once: true });
+        } else if (window.Hls && window.Hls.isSupported()) {
+          const hls = new Hls({ maxBufferLength: 10, startLevel: -1 });
+          hls.loadSource(url);
+          hls.attachMedia(video);
+          const onReady = () => { hls.off(Hls.Events.MANIFEST_PARSED, onReady); resolve(); };
+          hls.on(Hls.Events.MANIFEST_PARSED, onReady);
+          hls.on(Hls.Events.ERROR, (_, data) => { if (data && data.fatal) reject(new Error('HLS播放失败')); });
+          video._hls = hls;
+        } else {
+          reject(new Error('浏览器不支持HLS'));
+        }
+      });
+    }
+
+    async function playM3U8(url) {
+      await attachM3U8(player, url);
+      await player.play();
+    }
+
+    function waitEnded() {
+      return new Promise(res => player.addEventListener('ended', res, { once: true }));
+    }
+
+    function renderChoices(opts) {
+      try { player.pause(); } catch(e){}
+      choicesList.innerHTML = '';
+      opts.forEach(opt => {
+        const li = document.createElement('li');
+        li.className = 'choice-item';
+        li.textContent = opt.value;
+        li.onclick = () => onChoose(opt);
+        choicesList.appendChild(li);
+      });
+      choices.classList.remove('hidden');
+    }
+
+    async function onChoose(opt) {
+      choices.classList.add('hidden');
+      nextScene = null;
+      const nextReq = fetchScene(opt.id).then(d => { nextScene = d; }).catch(() => { nextScene = { video: '', options: [] }; });
+      const audioUrl = (opt.audio || '').trim();
+      const videoUrl = (opt.video || '').trim();
+      if (audioUrl) {
+        const audio = new Audio(audioUrl);
+        audio.crossOrigin = 'anonymous';
+        try { await audio.play(); } catch(e){}
+        await new Promise(res => audio.addEventListener('ended', res, { once: true }));
+        await new Promise(res => setTimeout(res, 500));
+      }
+      if (videoUrl) {
+        await playM3U8(videoUrl);
+        await waitEnded();
+      }
+      await nextReq;
+      currentScene = nextScene;
+      const opts = (currentScene && currentScene.options) ? currentScene.options : [];
+      if (!opts.length) {
+        endLayer.classList.remove('hidden');
+      } else {
+        renderChoices(opts);
+      }
+    }
+
+    startBtn.addEventListener('click', async () => {
+      loading.classList.add('hidden');
+      try {
+        currentScene = prefetchSceneData || await fetchScene(1);
+      } catch(e) {
+        currentScene = await fetchScene(1);
+      }
+      if (currentScene && currentScene.video) {
+        await playM3U8(currentScene.video);
+        await waitEnded();
+        const opts = currentScene.options || [];
+        if (!opts.length) {
+          endLayer.classList.remove('hidden');
+        } else {
+          renderChoices(opts);
+        }
+      }
+    });
+
+    document.getElementById('restartBtn').addEventListener('click', async () => {
+      endLayer.classList.add('hidden');
+      choices.classList.add('hidden');
+      currentScene = null;
+      nextScene = null;
+      loading.classList.remove('hidden');
+      try { prefetchSceneData = await fetchScene(1); } catch(e){}
+    });
+
+    (async function prefetch() {
+      try { prefetchSceneData = await fetchScene(1); } catch(e){}
+    })();
+  </script>
+</body>
+</html>
