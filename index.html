@@ -31,12 +31,12 @@
     @media (min-width: 768px) { .choices-list { grid-template-columns: 1fr 1fr 1fr; } }
     @media (min-width: 992px) { video { width: auto; height: 88vh; aspect-ratio: 9/16; } .choices-list { margin-bottom: clamp(120px, 20vh, 280px); } }
   </style>
-  <script src="https://unpkg.com/hls.js@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 </head>
 <body>
   <div class="app">
     <div class="player-wrap">
-      <video id="player" playsinline webkit-playsinline controls preload="auto"></video>
+      <video id="player" playsinline webkit-playsinline preload="auto"></video>
     </div>
     <div id="loading" class="loading">
       <div class="logo">交互视频游戏</div>
@@ -57,7 +57,7 @@
     </div>
   </div>
   <script>
-    const apiBase = 'http://127.0.0.1:8101';
+    const apiBase = '{$host}';
     const qs = new URLSearchParams(location.search);
     const gameId = qs.get('gameId') || '1';
     const player = document.getElementById('player');
